@@ -69,6 +69,12 @@ class Citizen:
 
         self.get_fitness_score()
 
+    def do_crazy_cross_over(self, parent_x, parent_y):
+        for idx, _ in enumerate(self.schedule):
+            self.schedule[idx] = parent_x.schedule[idx] if random.random() > 0.5 else parent_y.schedule[idx]
+
+        self.get_fitness_score()
+
     def do_mutation(self, threshold=0.7):
         if random.random() > threshold:
             self.do_complete_random_assignment()
@@ -181,7 +187,7 @@ class GASolver:
         num_iterations = 0
         num_offsprings = self.max_population_size * breeding_factor
         while self.do_natural_selection() and self.population[0].fitness_score > 0:
-            print 'Running Iteration: {}, lowest: {}'.format(num_iterations, self.population[0].fitness_score)
+            #print 'Running Iteration: {}, lowest: {}'.format(num_iterations, self.population[0].fitness_score)
 
             offsprings = []
             offsprings_hashing = set()
@@ -191,7 +197,7 @@ class GASolver:
                 parent_y = self.population[parent_y_idx]
 
                 young_citizen = Citizen()
-                young_citizen.do_cross_over(parent_x, parent_y)
+                young_citizen.do_crazy_cross_over(parent_x, parent_y)
 
                 if young_citizen.fitness_score > 0 and random.random() > 0.6:
                     young_citizen.do_mutation()
@@ -208,7 +214,7 @@ class GASolver:
         return self.population[0]
 
 
-solver = GASolver(GlobalAirport.N * 5)
+solver = GASolver(GlobalAirport.N * 3)
 solution = solver.solve()
 solution.output_schedule()
 
