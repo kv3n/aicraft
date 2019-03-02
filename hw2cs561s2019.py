@@ -1,6 +1,8 @@
 import random
+import copy
 from math import exp, log
 from collections import defaultdict
+from itertools import chain
 
 
 class Plane:
@@ -16,7 +18,7 @@ class Plane:
         return self.__str__()
 
     def __str__(self):
-        return '{} {} {} {} {} {}'.format(self.R, self.M, self.S, self.O, self.C)
+        return '{} {} {} {} {}'.format(self.R, self.M, self.S, self.O, self.C)
 
 
 class Airport:
@@ -29,10 +31,15 @@ class Airport:
             self.G = int(config_split[1])
             self.T = int(config_split[2])
 
+            self.max_time = 0
+
             self.N = int(airport_config[1])
             self.planes = []
             for line in airport_config[2:]:
-                self.planes.append(Plane(line))
+                plane = Plane(line)
+                self.planes.append(plane)
+
+                self.max_time = max(self.max_time, plane.R + plane.M + plane.C + plane.O)
 
     def __str__(self):
         return 'L:{} G:{} T:{}'.format(self.L, self.G, self.T) + '\n' + str(self.planes)
@@ -45,6 +52,10 @@ class Citizen:
     def __init__(self, is_mutation=True):
         self.schedule = [(0, 0)] * GlobalAirport.N
         self.fitness_score = 0
+
+        self.landing = defaultdict(int)
+        self.gate = defaultdict(int)
+        self.takeoff = defaultdict(int)
 
         if not is_mutation:
             self.do_complete_random_assignment()
@@ -63,55 +74,82 @@ class Citizen:
 
         self.get_fitness_score()
 
-    def do_cross_over(self, parent_x, parent_y):
-        cross_over_point = random.randint(1, GlobalAirport.N - 1)
-        self.schedule = parent_x.schedule[:cross_over_point] + parent_y.schedule[cross_over_point:]
+    def do_mutation(self):
+        mutation_idx = random.randint(0, GlobalAirport.N - 1)
 
-        self.get_fitness_score()
+        plane = GlobalAirport.planes[mutation_idx]
+        num_total_conflicts = self.fitness_score
 
-    def do_crazy_cross_over(self, parent_x, parent_y):
-        for idx, _ in enumerate(self.schedule):
-            self.schedule[idx] = parent_x.schedule[idx] if random.random() > 0.5 else parent_y.schedule[idx]
+        # To Undo previous conflicts
+        old_stl = self.schedule[mutation_idx][0]
+        old_tot = self.schedule[mutation_idx][1]
+        old_gate = old_stl + plane.M
 
-        self.get_fitness_score()
+        self.do_random_assignment(mutation_idx)
 
-    def do_mutation(self, threshold=0.7):
-        if random.random() > threshold:
-            self.do_complete_random_assignment()
-        else:
-            mutation_idx = random.randint(0, GlobalAirport.N - 1)
-            self.do_random_assignment(mutation_idx)
-            self.get_fitness_score()
+        # To Redo new conflicts
+        stl = self.schedule[mutation_idx][0]
+        tot = self.schedule[mutation_idx][1]
+        gate = stl + plane.M
+
+        # Landing
+        for minute in chain(xrange(old_stl, stl), xrange(gate, old_gate)):
+            self.landing[minute] -= 1
+            if self.landing[minute] >= GlobalAirport.L:
+                num_total_conflicts -= self.landing[minute]
+
+        for minute in chain(xrange(old_gate, gate), xrange(stl, old_stl)):
+            self.landing[minute] += 1
+            if self.landing[minute] > GlobalAirport.L:
+                num_total_conflicts += self.landing[minute] - 1
+
+        # Gate
+        for minute in xrange(old_gate, old_tot):
+            self.gate[minute] -= 1
+            if self.gate[minute] >= GlobalAirport.G:
+                num_total_conflicts -= self.gate[minute]
+
+        for minute in xrange(gate, tot):
+            self.gate[minute] += 1
+            if self.gate[minute] > GlobalAirport.G:
+                num_total_conflicts += self.gate[minute] - 1
+
+        # Takeoff
+        for minute in chain(xrange(old_tot, tot), xrange(tot + plane.O, old_tot + plane.O)):
+            self.takeoff[minute] -= 1
+            if self.takeoff[minute] >= GlobalAirport.T:
+                num_total_conflicts -= self.takeoff[minute]
+
+        for minute in chain(xrange(old_tot + plane.O, tot + plane.O), xrange(tot, old_tot)):
+            self.takeoff[minute] += 1
+            if self.landing[minute] > GlobalAirport.T:
+                num_total_conflicts += self.takeoff[minute] - 1
+
+        self.fitness_score = num_total_conflicts
 
     def get_fitness_score(self):
-        landing = defaultdict(int)
-        gate = defaultdict(int)
-        takeoff = defaultdict(int)
-
-        num_landing_conflicts = 0
-        num_gate_conflicts = 0
-        num_takeoff_conflicts = 0
+        num_total_conflicts = 0
 
         # Count number of conflicting minutes
         for idx, plane in enumerate(GlobalAirport.planes):
             stl = self.schedule[idx][0]
             tot = self.schedule[idx][1]
             for minute in xrange(stl, stl + plane.M):
-                landing[minute] += 1
-                if landing[minute] > GlobalAirport.L:
-                    num_landing_conflicts += landing[minute] - 1
+                self.landing[minute] += 1
+                if self.landing[minute] > GlobalAirport.L:
+                    num_total_conflicts += self.landing[minute] - 1
 
             for minute in xrange(stl + plane.M, tot):
-                gate[minute] += 1
-                if gate[minute] > GlobalAirport.G:
-                    num_gate_conflicts += gate[minute] - 1
+                self.gate[minute] += 1
+                if self.gate[minute] > GlobalAirport.G:
+                    num_total_conflicts += self.gate[minute] - 1
 
             for minute in xrange(tot, tot + plane.O):
-                takeoff[minute] += 1
-                if takeoff[minute] > GlobalAirport.T:
-                    num_takeoff_conflicts += takeoff[minute] - 1
+                self.takeoff[minute] += 1
+                if self.takeoff[minute] > GlobalAirport.T:
+                    num_total_conflicts += self.takeoff[minute] - 1
 
-        self.fitness_score = num_landing_conflicts + num_gate_conflicts + num_takeoff_conflicts
+        self.fitness_score = num_total_conflicts
 
     def __lt__(self, other):
         return self.fitness_score < other.fitness_score
@@ -136,85 +174,43 @@ class GASolver:
         self.population = [Citizen(is_mutation=False) for _ in xrange(max_population_size)]
         self.max_population_size = max_population_size
 
-        self.cdf = [0.0] * max_population_size + [1.0]
-        self.build_cdf()
-
-    def build_cdf(self):
-        lambda_factor = -log(1 - 0.7) / (0.4 * self.max_population_size)
-        for x, cdf_x in enumerate(self.cdf):
-            self.cdf[x] = 1 - exp(-lambda_factor * x)
-
-    def get_random_parents(self):
-        def find_idx(val, left, right):
-            while left <= right:
-                mid = (left + right) // 2
-                if val < self.cdf[mid]:
-                    right = mid - 1
-                else:
-                    left = mid + 1
-
-            return right
-
-        dice_roll = random.random()
-        parent_x = find_idx(dice_roll, 0, self.max_population_size - 1)
-
-        pre_cdf = self.cdf[parent_x + 1]
-        self.cdf[parent_x + 1] = self.cdf[parent_x]
-
-        dice_roll = random.random()
-        parent_y = find_idx(dice_roll, 0, self.max_population_size - 1)
-
-        self.cdf[parent_x + 1] = pre_cdf
-
-        parent_x = int((float(parent_x) / self.max_population_size) * len(self.population))
-        parent_y = int((float(parent_y) / self.max_population_size) * len(self.population))
-
-        return parent_x, parent_y
-
     def __str__(self):
         printstr = ''
         for population in self.population:
             printstr += str(population.fitness_score) + '\n'
         return printstr
 
-    def do_natural_selection(self):
-        self.population.sort()
-        self.population = self.population[:self.max_population_size]
-
-        return True
-
-    def solve(self, breeding_factor=5):
+    def solve(self):
         num_iterations = 0
-        num_offsprings = self.max_population_size * breeding_factor
-        while self.do_natural_selection() and self.population[0].fitness_score > 0:
-            #print 'Running Iteration: {}, lowest: {}'.format(num_iterations, self.population[0].fitness_score)
+        bad_citizen_tolerance = GlobalAirport.max_time * GlobalAirport.N * (GlobalAirport.N - 1) * 0.5  # 0.25 because 50% conflicts
+        alpha = 0.86
+        while True:
+            for idx, citizen in enumerate(self.population):
+                if citizen.fitness_score == 0:
+                    return citizen
 
-            offsprings = []
-            offsprings_hashing = set()
-            while len(offsprings) < num_offsprings:
-                parent_x_idx, parent_y_idx = self.get_random_parents()
-                parent_x = self.population[parent_x_idx]
-                parent_y = self.population[parent_y_idx]
+                mutated_citizen = copy.deepcopy(citizen)
+                mutated_citizen.do_mutation()
 
-                young_citizen = Citizen()
-                young_citizen.do_crazy_cross_over(parent_x, parent_y)
+                # The new score should be less than the old score. For us 0 => Good
+                mutation_score = citizen.fitness_score - mutated_citizen.fitness_score
 
-                if young_citizen.fitness_score > 0 and random.random() > 0.6:
-                    young_citizen.do_mutation()
+                if mutation_score > 0:  # Should this be greater than or greater than equal to?
+                    self.population[idx] = mutated_citizen
+                else:
+                    acceptance_prob = exp(mutation_score / bad_citizen_tolerance)   # * num_iterations  # Change this
+                    if random.random() < acceptance_prob:
+                        self.population[idx] = mutated_citizen
 
-                # Only add a children when its score is better than its parents
-                if young_citizen.get_key() not in offsprings_hashing:
-                    offsprings_hashing.add(young_citizen.get_key())
-                    offsprings.append(young_citizen)
+            print 'Ran {}'.format(num_iterations)
 
-            self.population = offsprings
-
+            bad_citizen_tolerance = bad_citizen_tolerance * alpha
             num_iterations += 1
 
-        return self.population[0]
+        return None
 
 
-solver = GASolver(GlobalAirport.N * 3)
+solver = GASolver(GlobalAirport.N)
 solution = solver.solve()
 solution.output_schedule()
 
