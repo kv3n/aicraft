@@ -122,7 +122,7 @@ class Citizen:
 
         for minute in chain(xrange(old_tot + plane.O, tot + plane.O), xrange(tot, old_tot)):
             self.takeoff[minute] += 1
-            if self.landing[minute] > GlobalAirport.T:
+            if self.takeoff[minute] > GlobalAirport.T:
                 num_total_conflicts += self.takeoff[minute] - 1
 
         self.fitness_score = num_total_conflicts
@@ -183,7 +183,7 @@ class GASolver:
     def solve(self):
         num_iterations = 0
         bad_citizen_tolerance = GlobalAirport.max_time * GlobalAirport.N * (GlobalAirport.N - 1) * 0.5  # 0.25 because 50% conflicts
-        alpha = 0.86
+        alpha = 0.82
         while True:
             for idx, citizen in enumerate(self.population):
                 if citizen.fitness_score == 0:
@@ -202,7 +202,7 @@ class GASolver:
                     if random.random() < acceptance_prob:
                         self.population[idx] = mutated_citizen
 
-            print 'Ran {}'.format(num_iterations)
+            print 'Ran {} with {}'.format(num_iterations, self.population[0].fitness_score)
 
             bad_citizen_tolerance = bad_citizen_tolerance * alpha
             num_iterations += 1
