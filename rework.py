@@ -47,12 +47,46 @@ class Airport:
 GlobalAirport = Airport()
 
 
-class Schedule:
-    def __init__(self, do_assignment=False, pre_assigned=False, solver_type=0):
+class Thermostat:
+    def __init__(self, initial_temp, alpha, update_schedule):
+        self.temperature = initial_temp
+        self.initial_temp = initial_temp
+        self.alpha = alpha
+        self.update_schedule = update_schedule
+
+        self.rotations = 0
+        self.update_count = 0
+        self.tabu_rotations = 0
+
+    def update(self, velocity):
+        self.rotations += 1
+
+        if velocity == 0:
+            self.tabu_rotations += 1
+        else:
+            self.tabu_rotations = 0
+
+        if self.tabu_rotations > 1000:
+            self.reset()
+
+        if self.rotations % self.update_schedule == 0:
+            self.update_count += 1
+            self.temperature = self.alpha * self.temperature
+
+    def reset(self):
+        self.rotations = 0
+        self.tabu_rotations = 0
+        self.temperature = self.initial_temp
+
+
+class Solver:
+    def __init__(self, do_assignment=False, solver_type=0):
         self.land_slots = [0] * GlobalAirport.max_time
         self.gate_slots = [0] * GlobalAirport.max_time
         self.takeoff_slots = [0] * GlobalAirport.max_time
         self.schedule = [(0, 0, 0, 0) for _ in xrange(GlobalAirport.N)]
+
+        self.thermostat = Thermostat(initial_temp=10000, alpha=0.88, update_schedule=4)
 
         if solver_type == 0:
             self.solver_type = 'Combinatorial'
@@ -63,32 +97,21 @@ class Schedule:
         elif solver_type == 2:
             self.solver_type = 'Conflict per Slot'
             self.fitness_type = self.oneconflict_perslot_fn
+        elif solver_type == 3:
+            self.solver_type = 'Extra Resource'
+            self.fitness_type = self.extra_resource_fn
 
         self.fitness_score = 0
 
         if do_assignment:
-            if pre_assigned:
-                self.do_pre_assigned_schedule()
-            else:
-                self.do_initial_assignment()
+            self.do_initial_assignment()
             self.get_fitness_score()
 
     def do_initial_assignment(self):
-        land_rightaway_indices = set([random.randint(0, GlobalAirport.N-1) for _ in range(GlobalAirport.min_resource)])
-        land_rightaway_wiggle = GlobalAirport.L - GlobalAirport.min_resource
-
         for idx, _ in enumerate(self.schedule):
             plane = GlobalAirport.planes[idx]
 
-            if idx in land_rightaway_indices or plane.R == 0:
-                stl = 0
-            else:
-                if land_rightaway_wiggle > 0:
-                    stl = random.randint(0, plane.R)
-                    land_rightaway_wiggle -= 1
-                else:
-                    stl = random.randint(1, plane.R)
-
+            stl = random.randint(0, plane.R)
             time_at_gate = stl + plane.M
             tot = random.randint(time_at_gate + plane.S, time_at_gate + plane.C)
             takeoff = tot + plane.O
@@ -134,23 +157,23 @@ class Schedule:
         self.gate_slots[time_at_gate:tot] = [x-1 for x in self.gate_slots[time_at_gate:tot]]
         self.takeoff_slots[tot:takeoff] = [x-1 for x in self.takeoff_slots[tot:takeoff]]
 
-    def oneconflict_perslot_fn(self, time):
+    def oneconflict_perslot_fn(self, minute):
         slot_conflict_score = 0
-        num_landing = self.land_slots[time]
-        num_gate = self.gate_slots[time]
-        num_takeoff = self.takeoff_slots[time]
+        num_landing = self.land_slots[minute]
+        num_gate = self.gate_slots[minute]
+        num_takeoff = self.takeoff_slots[minute]
 
         if num_landing > GlobalAirport.L or num_gate > GlobalAirport.G or num_takeoff > GlobalAirport.T:
             slot_conflict_score += 1
 
         return slot_conflict_score
 
-    def one_slot_per_resource_fn(self, time):
+    def one_slot_per_resource_fn(self, minute):
         slot_conflict_score = 0
 
-        num_landing = self.land_slots[time]
-        num_gate = self.gate_slots[time]
-        num_takeoff = self.takeoff_slots[time]
+        num_landing = self.land_slots[minute]
+        num_gate = self.gate_slots[minute]
+        num_takeoff = self.takeoff_slots[minute]
 
         if num_landing > GlobalAirport.L:
             slot_conflict_score += 1
@@ -161,11 +184,24 @@ class Schedule:
 
         return slot_conflict_score
 
-    def combinatorial_slot_fn(self, time):
+    def extra_resource_fn(self, minute):
         slot_conflict_score = 0
-        num_landing = self.land_slots[time]
-        num_gate = self.gate_slots[time]
-        num_takeoff = self.takeoff_slots[time]
+
+        num_landing = self.land_slots[minute]
+        num_gate = self.gate_slots[minute]
+        num_takeoff = self.takeoff_slots[minute]
+
+        slot_conflict_score += max(num_landing - GlobalAirport.L, 0)
+        slot_conflict_score += max(num_gate - GlobalAirport.G, 0)
+        slot_conflict_score += max(num_takeoff - GlobalAirport.T, 0)
+
+        return slot_conflict_score
+
+    def combinatorial_slot_fn(self, minute):
+        slot_conflict_score = 0
+        num_landing = self.land_slots[minute]
+        num_gate = self.gate_slots[minute]
+        num_takeoff = self.takeoff_slots[minute]
 
         if num_landing > GlobalAirport.L:
             slot_conflict_score += ((num_landing * (num_landing - 1)) // 2)
@@ -181,12 +217,12 @@ class Schedule:
     def get_fitness_score(self):
         num_total_conflicts = 0
 
-        for time in xrange(GlobalAirport.max_time):
-            num_total_conflicts += self.fitness_type(time)
+        for minute in xrange(GlobalAirport.max_time):
+            num_total_conflicts += self.fitness_type(minute)
 
         self.fitness_score = num_total_conflicts
 
-    def update(self, temperature):
+    def update(self):
         plane_to_update = random.randint(0, GlobalAirport.N-1)
         plane = GlobalAirport.planes[plane_to_update]
 
@@ -211,7 +247,7 @@ class Schedule:
         rejected = False
         delta = current_score - self.fitness_score
         if delta <= 0:
-            acceptance_prob = exp(delta / temperature)
+            acceptance_prob = exp(delta / self.thermostat.temperature)
             if random.random() > acceptance_prob:
                 rejected = True
 
@@ -224,6 +260,10 @@ class Schedule:
                                          takeoff=takeoff)
             self.fitness_score = current_score
 
+        delta = current_score - self.fitness_score
+        velocity = delta / abs(delta) if delta != 0 else 0
+        self.thermostat.update(velocity=velocity)
+
     def output_schedule(self):
         with open('output.txt', 'w') as fp:
             for plane_schedule in self.schedule[:-1]:
@@ -231,36 +271,12 @@ class Schedule:
             fp.write('{} {}'.format(self.schedule[-1][0], self.schedule[-1][2]))
 
 
-class Thermostat:
-    def __init__(self, initial_temp, alpha, update_schedule):
-        self.temperature = initial_temp
-        self.initial_temp = initial_temp
-        self.alpha = alpha
-        self.update_schedule = update_schedule
-
-        self.rotations = 0
-
-    def update(self):
-        self.rotations += 1
-
-        if self.rotations > 10000:
-            self.rotations = 0
-            self.reset()
-
-        if self.rotations % self.update_schedule == 0:
-            self.temperature = self.temperature * self.alpha
-
-    def reset(self):
-        self.temperature = self.initial_temp
-
-
-class Solver:
+class SolutionManager:
     def __init__(self):
-        self.solvers = [Schedule(do_assignment=True, solver_type=0),
-                        Schedule(do_assignment=True, solver_type=1),
-                        Schedule(do_assignment=True, solver_type=2)]
-
-        self.thermostat = Thermostat(initial_temp=1000, alpha=0.88, update_schedule=4)
+        self.solvers = [Solver(do_assignment=True, solver_type=0),
+                        Solver(do_assignment=True, solver_type=1),
+                        Solver(do_assignment=True, solver_type=2),
+                        Solver(do_assignment=True, solver_type=3)]
 
     def solve(self):
         start_time = time.time()
@@ -273,10 +289,9 @@ class Solver:
                     solver.output_schedule()
                     return
 
-                solver.update(self.thermostat.temperature)
+                solver.update()
             num_iterations += 1
-            self.thermostat.update()
 
 
-solver = Solver()
-solver.solve()
+solution_manager = SolutionManager()
+solution_manager.solve()
