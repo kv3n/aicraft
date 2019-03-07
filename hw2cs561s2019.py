@@ -4,6 +4,8 @@ from math import exp, log
 from collections import defaultdict
 from itertools import chain
 
+from matplotlib import pyplot as plt
+
 
 class Plane:
     def __init__(self, plane_config):
@@ -92,6 +94,7 @@ class Citizen:
         tot = self.schedule[mutation_idx][1]
         gate = stl + plane.M
 
+        """
         # Landing
         for minute in chain(xrange(old_stl, stl), xrange(gate, old_gate)):
             self.landing[minute] -= 1
@@ -126,9 +129,17 @@ class Citizen:
                 num_total_conflicts += self.takeoff[minute] - 1
 
         self.fitness_score = num_total_conflicts
+        """
+
+        self.get_fitness_score()
 
     def get_fitness_score(self):
         num_total_conflicts = 0
+
+        # When recomputing fitness score in do mutate, comment this out
+        self.landing = defaultdict(int)
+        self.gate = defaultdict(int)
+        self.takeoff = defaultdict(int)
 
         # Count number of conflicting minutes
         for idx, plane in enumerate(GlobalAirport.planes):
@@ -136,17 +147,23 @@ class Citizen:
             tot = self.schedule[idx][1]
             for minute in xrange(stl, stl + plane.M):
                 self.landing[minute] += 1
-                if self.landing[minute] > GlobalAirport.L:
+                if self.landing[minute] == GlobalAirport.L + 1:
+                    num_total_conflicts += (self.landing[minute] * (self.landing[minute] - 1) / 2)
+                elif self.landing[minute] > GlobalAirport.L:
                     num_total_conflicts += self.landing[minute] - 1
 
             for minute in xrange(stl + plane.M, tot):
                 self.gate[minute] += 1
-                if self.gate[minute] > GlobalAirport.G:
+                if self.gate[minute] == GlobalAirport.G + 1:
+                    num_total_conflicts += (self.gate[minute] * (self.gate[minute] - 1) / 2)
+                elif self.gate[minute] > GlobalAirport.G:
                     num_total_conflicts += self.gate[minute] - 1
 
             for minute in xrange(tot, tot + plane.O):
                 self.takeoff[minute] += 1
-                if self.takeoff[minute] > GlobalAirport.T:
+                if self.takeoff[minute] == GlobalAirport.T + 1:
+                    num_total_conflicts += (self.takeoff[minute] * (self.takeoff[minute] - 1) / 2)
+                elif self.takeoff[minute] > GlobalAirport.T:
                     num_total_conflicts += self.takeoff[minute] - 1
 
         self.fitness_score = num_total_conflicts
@@ -182,8 +199,9 @@ class GASolver:
 
     def solve(self):
         num_iterations = 0
-        bad_citizen_tolerance = GlobalAirport.max_time * GlobalAirport.N * (GlobalAirport.N - 1) * 0.5  # 0.25 because 50% conflicts
-        alpha = 0.82
+        # This should change according to new finding
+        bad_citizen_tolerance = GlobalAirport.max_time * GlobalAirport.N * (GlobalAirport.N - 1) * 0.25  # 0.25 because 50% conflicts
+        alpha = 0.815
         while True:
             for idx, citizen in enumerate(self.population):
                 if citizen.fitness_score == 0:
@@ -209,10 +227,44 @@ class GASolver:
 
         return None
 
+    def evaluate_fitness_fn(self):
+        num_iterations = 100000
+        citizen_set = set()
+        score_dict = defaultdict(int)
+        while num_iterations > 0:
+            print num_iterations
+            citizen = Citizen(is_mutation=False)
 
-solver = GASolver(GlobalAirport.N)
+            key = citizen.get_key()
+            if key not in citizen_set:
+                citizen_set.add(key)
+                score_dict[citizen.fitness_score] += 1
+
+            num_iterations -= 1
+
+        x = score_dict.keys()
+        y = score_dict.values()
+
+        max_idx = y.index(max(y))
+        print('Max: {} of {} scores found'.format(y[max_idx], x[max_idx]))
+
+        fig, axs = plt.subplots(1, 1, sharey=True, tight_layout=True)
+
+        # We can set the number of bins with the `bins` kwarg
+        #axs[0].hist(x, bins=len(score_dict))
+        #axs[1].hist(y, bins=100)
+
+        axs.hist2d(x, y)
+
+        plt.show()
+
+
+"""
+solver = GASolver(GlobalAirport.N * 2)
+
 solution = solver.solve()
 solution.output_schedule()
+"""
 
 """
 airport.planes[0].STL = 0
@@ -224,4 +276,13 @@ airport.planes[2].TOT = 130
 airport.planes[3].STL = 70
 airport.planes[3].TOT = 150
 """
+
+citizen = Citizen()
+citizen.schedule = [(2, 97), (9, 164)
+
+37 84
+60 170]
+citizen.get_fitness_score()
+
+print(citizen.fitness_score)
 
