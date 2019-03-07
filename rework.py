@@ -67,16 +67,16 @@ class Thermostat:
             self.tabu_rotations = 0
 
         if self.tabu_rotations > 1000:
-            self.reset()
+            self.reset(soft=random.uniform(0.3, 0.8))
 
         if self.rotations % self.update_schedule == 0:
             self.update_count += 1
             self.temperature = self.alpha * self.temperature
 
-    def reset(self):
+    def reset(self, soft=1.0):
         self.rotations = 0
         self.tabu_rotations = 0
-        self.temperature = self.initial_temp
+        self.temperature = self.initial_temp * soft
 
 
 class Solver:
@@ -273,19 +273,20 @@ class Solver:
 
 class SolutionManager:
     def __init__(self):
+        self.start_time = time.time()
+
         self.solvers = [Solver(do_assignment=True, solver_type=0),
                         Solver(do_assignment=True, solver_type=1),
                         Solver(do_assignment=True, solver_type=2),
                         Solver(do_assignment=True, solver_type=3)]
 
     def solve(self):
-        start_time = time.time()
         num_iterations = 0
         while True:
             for idx, solver in enumerate(self.solvers):
                 print('iteration {} - solver {} - score {}'.format(num_iterations, idx, solver.fitness_score))
                 if solver.fitness_score == 0:
-                    print('Finished in {} seconds by solver type {}'.format(time.time() - start_time, solver.solver_type))
+                    print('Finished in {} seconds by solver type {}'.format(time.time() - self.start_time, solver.solver_type))
                     solver.output_schedule()
                     return
 
