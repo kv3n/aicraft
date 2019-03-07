@@ -197,7 +197,7 @@ class Schedule:
 
         new_stl = random.randint(0, plane.R)
         new_time_at_gate = new_stl + plane.M
-        new_tot = random.randint(time_at_gate + plane.S, time_at_gate + plane.C)
+        new_tot = random.randint(new_time_at_gate + plane.S, new_time_at_gate + plane.C)
         new_takeoff = new_tot + plane.O
 
         self.register_plane_schedule(idx=plane_to_update,
