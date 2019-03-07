@@ -48,20 +48,19 @@ GlobalAirport = Airport()
 
 
 class Schedule:
-    def __init__(self, do_assignment=False, pre_assigned=False):
+    def __init__(self, do_assignment=False, pre_assigned=False, solver_type=0):
         self.land_slots = [0] * GlobalAirport.max_time
         self.gate_slots = [0] * GlobalAirport.max_time
         self.takeoff_slots = [0] * GlobalAirport.max_time
         self.schedule = [(0, 0, 0, 0) for _ in xrange(GlobalAirport.N)]
 
-        fitness_type = random.randint(0, 2)
-        if fitness_type == 0:
+        if solver_type == 0:
             self.solver_type = 'Combinatorial'
             self.fitness_type = self.combinatorial_slot_fn
-        elif fitness_type == 1:
+        elif solver_type == 1:
             self.solver_type = 'Slot Per Resource'
             self.fitness_type = self.one_slot_per_resource_fn
-        elif fitness_type == 2:
+        elif solver_type == 2:
             self.solver_type = 'Conflict per Slot'
             self.fitness_type = self.oneconflict_perslot_fn
 
@@ -256,9 +255,11 @@ class Thermostat:
 
 
 class Solver:
-    def __init__(self, num_solvers):
-        self.solvers = [Schedule(do_assignment=True) for _ in xrange(num_solvers)]
-        self.max_solvers = num_solvers
+    def __init__(self):
+        self.solvers = [Schedule(do_assignment=True, solver_type=0),
+                        Schedule(do_assignment=True, solver_type=1),
+                        Schedule(do_assignment=True, solver_type=2)]
+
         self.thermostat = Thermostat(initial_temp=1000, alpha=0.88, update_schedule=4)
 
     def solve(self):
@@ -277,5 +278,5 @@ class Solver:
             self.thermostat.update()
 
 
-solver = Solver(num_solvers=3)
+solver = Solver()
 solver.solve()
