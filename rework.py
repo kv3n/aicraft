@@ -305,7 +305,7 @@ from multiprocessing.pool import ThreadPool
 
 
 def main():
-    test_files = glob.glob('test/test_*')
+    test_files = glob.glob('test*/test_*')
 
     total_files = len(test_files)
     results_fetched = 0
@@ -315,7 +315,7 @@ def main():
     results_queue = Manager().Queue()
     pool_data = [(results_queue, idx, test_file) for idx, test_file in enumerate(test_files)]
 
-    num_threads = len(test_files) // cpu_count() // 2
+    num_threads = min(len(test_files) // cpu_count(), 5)
     print('Initializing with {} threads'.format(num_threads))
     process_pool = ThreadPool(num_threads)
     process_pool.map_async(func=perform_test, iterable=pool_data)
@@ -330,7 +330,7 @@ def main():
         passed_string = 'PASS' if test_passed else 'FAIL'
         results_fetched += 1
 
-        print('[{}] Result {}: {} in time {} seconds'.format(results_fetched, test_files[idx], passed_string, time_elapsed))
+        print('[{}/{}/{}] Result {},{}: {} in time {} seconds'.format(results_fetched, passed, failed, idx, test_files[idx], passed_string, time_elapsed))
 
     print('Result: {}/{} Passed = {}'.format(passed, total_files, passed * 100.0 / total_files))
     print('Result: {}/{} Failed = {}'.format(failed, total_files, failed * 100.0 / total_files))
