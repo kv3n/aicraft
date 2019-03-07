@@ -20,8 +20,8 @@ class Plane:
 
 
 class Airport:
-    def __init__(self):
-        with open('input.txt', 'rU') as fp:
+    def __init__(self, input_file='input.txt'):
+        with open(input_file, 'rU') as fp:
             airport_config = fp.readlines()
 
             config_split = airport_config[0].split(' ')
@@ -44,9 +44,6 @@ class Airport:
         return 'L:{} G:{} T:{}'.format(self.L, self.G, self.T) + '\n' + str(self.planes)
 
 
-GlobalAirport = Airport()
-
-
 class Thermostat:
     def __init__(self, initial_temp, alpha, update_schedule):
         self.temperature = initial_temp
@@ -67,24 +64,25 @@ class Thermostat:
             self.tabu_rotations = 0
 
         if self.tabu_rotations > 1000:
-            self.reset(soft=random.uniform(0.3, 0.8))
+            self.reheat(soft=random.uniform(0.3, 0.8))
 
         if self.rotations % self.update_schedule == 0:
             self.update_count += 1
             self.temperature = self.alpha * self.temperature
 
-    def reset(self, soft=1.0):
+    def reheat(self, soft=1.0):
         self.rotations = 0
         self.tabu_rotations = 0
         self.temperature = self.initial_temp * soft
 
 
 class Solver:
-    def __init__(self, do_assignment=False, solver_type=0):
-        self.land_slots = [0] * GlobalAirport.max_time
-        self.gate_slots = [0] * GlobalAirport.max_time
-        self.takeoff_slots = [0] * GlobalAirport.max_time
-        self.schedule = [(0, 0, 0, 0) for _ in xrange(GlobalAirport.N)]
+    def __init__(self, airport, do_assignment=False, solver_type=0):
+        self.airport = airport
+        self.land_slots = [0] * airport.max_time
+        self.gate_slots = [0] * airport.max_time
+        self.takeoff_slots = [0] * airport.max_time
+        self.schedule = [(0, 0, 0, 0) for _ in xrange(airport.N)]
 
         self.thermostat = Thermostat(initial_temp=10000, alpha=0.88, update_schedule=4)
 
@@ -109,7 +107,7 @@ class Solver:
 
     def do_initial_assignment(self):
         for idx, _ in enumerate(self.schedule):
-            plane = GlobalAirport.planes[idx]
+            plane = self.airport.planes[idx]
 
             stl = random.randint(0, plane.R)
             time_at_gate = stl + plane.M
@@ -130,7 +128,7 @@ class Solver:
                 solution_schedule.append((int(schedule_line.split(' ')[0]), int(schedule_line.split(' ')[1])))
 
         for idx, _ in enumerate(self.schedule):
-            plane = GlobalAirport.planes[idx]
+            plane = self.airport.planes[idx]
 
             stl = solution_schedule[idx][0]
             tot = solution_schedule[idx][1]
@@ -163,7 +161,7 @@ class Solver:
         num_gate = self.gate_slots[minute]
         num_takeoff = self.takeoff_slots[minute]
 
-        if num_landing > GlobalAirport.L or num_gate > GlobalAirport.G or num_takeoff > GlobalAirport.T:
+        if num_landing > self.airport.L or num_gate > self.airport.G or num_takeoff > self.airport.T:
             slot_conflict_score += 1
 
         return slot_conflict_score
@@ -175,11 +173,11 @@ class Solver:
         num_gate = self.gate_slots[minute]
         num_takeoff = self.takeoff_slots[minute]
 
-        if num_landing > GlobalAirport.L:
+        if num_landing > self.airport.L:
             slot_conflict_score += 1
-        if num_gate > GlobalAirport.G:
+        if num_gate > self.airport.G:
             slot_conflict_score += 1
-        if num_takeoff > GlobalAirport.T:
+        if num_takeoff > self.airport.T:
             slot_conflict_score += 1
 
         return slot_conflict_score
@@ -191,9 +189,9 @@ class Solver:
         num_gate = self.gate_slots[minute]
         num_takeoff = self.takeoff_slots[minute]
 
-        slot_conflict_score += max(num_landing - GlobalAirport.L, 0)
-        slot_conflict_score += max(num_gate - GlobalAirport.G, 0)
-        slot_conflict_score += max(num_takeoff - GlobalAirport.T, 0)
+        slot_conflict_score += max(num_landing - self.airport.L, 0)
+        slot_conflict_score += max(num_gate - self.airport.G, 0)
+        slot_conflict_score += max(num_takeoff - self.airport.T, 0)
 
         return slot_conflict_score
 
@@ -203,13 +201,13 @@ class Solver:
         num_gate = self.gate_slots[minute]
         num_takeoff = self.takeoff_slots[minute]
 
-        if num_landing > GlobalAirport.L:
+        if num_landing > self.airport.L:
             slot_conflict_score += ((num_landing * (num_landing - 1)) // 2)
 
-        if num_gate > GlobalAirport.G:
+        if num_gate > self.airport.G:
             slot_conflict_score += ((num_gate * (num_gate - 1)) // 2)
 
-        if num_takeoff > GlobalAirport.T:
+        if num_takeoff > self.airport.T:
             slot_conflict_score += ((num_takeoff * (num_takeoff - 1)) // 2)
 
         return slot_conflict_score
@@ -217,14 +215,14 @@ class Solver:
     def get_fitness_score(self):
         num_total_conflicts = 0
 
-        for minute in xrange(GlobalAirport.max_time):
+        for minute in xrange(self.airport.max_time):
             num_total_conflicts += self.fitness_type(minute)
 
         self.fitness_score = num_total_conflicts
 
     def update(self):
-        plane_to_update = random.randint(0, GlobalAirport.N-1)
-        plane = GlobalAirport.planes[plane_to_update]
+        plane_to_update = random.randint(0, self.airport.N-1)
+        plane = self.airport.planes[plane_to_update]
 
         stl, time_at_gate, tot, takeoff = self.schedule[plane_to_update]
         current_score = self.fitness_score
@@ -248,6 +246,9 @@ class Solver:
         delta = current_score - self.fitness_score
         if delta <= 0:
             acceptance_prob = exp(delta / self.thermostat.temperature)
+            if delta == 0:
+                acceptance_prob = 0.5
+
             if random.random() > acceptance_prob:
                 rejected = True
 
@@ -264,35 +265,99 @@ class Solver:
         velocity = delta / abs(delta) if delta != 0 else 0
         self.thermostat.update(velocity=velocity)
 
-    def output_schedule(self):
-        with open('output.txt', 'w') as fp:
+    def output_schedule(self, output_file):
+        with open(output_file, 'w') as fp:
             for plane_schedule in self.schedule[:-1]:
                 fp.write('{} {}\n'.format(plane_schedule[0], plane_schedule[2]))
             fp.write('{} {}'.format(self.schedule[-1][0], self.schedule[-1][2]))
 
 
 class SolutionManager:
-    def __init__(self):
-        self.start_time = time.time()
+    def __init__(self, input_file='input.txt', output_file='output.txt'):
+        airport = Airport(input_file=input_file)
 
-        self.solvers = [Solver(do_assignment=True, solver_type=0),
-                        Solver(do_assignment=True, solver_type=1),
-                        Solver(do_assignment=True, solver_type=2),
-                        Solver(do_assignment=True, solver_type=3)]
+        self.solvers = [Solver(airport, do_assignment=True, solver_type=0),
+                        Solver(airport, do_assignment=True, solver_type=1),
+                        Solver(airport, do_assignment=True, solver_type=2),
+                        Solver(airport, do_assignment=True, solver_type=3)]
+        self.output_file = output_file
 
     def solve(self):
         num_iterations = 0
         while True:
             for idx, solver in enumerate(self.solvers):
-                print('iteration {} - solver {} - score {}'.format(num_iterations, idx, solver.fitness_score))
                 if solver.fitness_score == 0:
-                    print('Finished in {} seconds by solver type {}'.format(time.time() - self.start_time, solver.solver_type))
-                    solver.output_schedule()
+                    solver.output_schedule(self.output_file)
                     return
 
                 solver.update()
             num_iterations += 1
 
 
+"""
 solution_manager = SolutionManager()
 solution_manager.solve()
+"""
+
+import glob
+from multiprocessing import Process, Manager, cpu_count
+from multiprocessing.pool import ThreadPool
+
+
+def main():
+    test_files = glob.glob('test/test_*')
+
+    total_files = len(test_files)
+    results_fetched = 0
+    failed = 0
+    passed = 0
+
+    results_queue = Manager().Queue()
+    pool_data = [(results_queue, idx, test_file) for idx, test_file in enumerate(test_files)]
+
+    num_threads = len(test_files) // cpu_count() // 2
+    print('Initializing with {} threads'.format(num_threads))
+    process_pool = ThreadPool(num_threads)
+    process_pool.map_async(func=perform_test, iterable=pool_data)
+
+    while results_fetched < total_files:
+        idx, test_passed, time_elapsed = results_queue.get()
+        if test_passed:
+            passed += 1
+        else:
+            failed += 1
+
+        passed_string = 'PASS' if test_passed else 'FAIL'
+        results_fetched += 1
+
+        print('[{}] Result {}: {} in time {} seconds'.format(results_fetched, test_files[idx], passed_string, time_elapsed))
+
+    print('Result: {}/{} Passed = {}'.format(passed, total_files, passed * 100.0 / total_files))
+    print('Result: {}/{} Failed = {}'.format(failed, total_files, failed * 100.0 / total_files))
+
+
+def perform_test(args):
+    results_queue, idx, input_file = args
+    out_file = input_file.replace('test_', 'out_test_')
+    execution_process = Process(target=execute_solver, args=(input_file, out_file))
+    execution_process.start()
+
+    start_time = time.time()
+    elapsed_time = 0.0
+    while execution_process.is_alive():
+        elapsed_time = time.time() - start_time
+        if elapsed_time > 60:
+            execution_process.terminate()
+            results_queue.put((idx, False, elapsed_time))
+            return
+
+    results_queue.put((idx, True, elapsed_time))
+    return
+
+
+def execute_solver(input_file, output_file):
+    solution_manager = SolutionManager(input_file=input_file, output_file=output_file)
+    solution_manager.solve()
+
+if __name__ == "__main__":
+    main()
