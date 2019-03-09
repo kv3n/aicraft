@@ -6,6 +6,12 @@ from multiprocessing.pool import ThreadPool
 from schedule_solver import SolutionManager
 
 
+class PrintColor:
+    OKGREEN = '\033[92m'
+    FAIL = '\033[91m'
+    ENDC = '\033[0m'
+
+
 class ScheduleChecker:
     def __init__(self, test_dir):
         test_files = glob.glob(test_dir + '/test_*')
@@ -18,7 +24,7 @@ class ScheduleChecker:
         results_queue = Manager().Queue()
         pool_data = [(results_queue, idx, test_file) for idx, test_file in enumerate(test_files)]
 
-        num_threads = min(len(test_files) // cpu_count(), 3)
+        num_threads = max(min(len(test_files) // cpu_count(), 3), 1)
         print('Initializing with {} threads'.format(num_threads))
         process_pool = ThreadPool(num_threads)
         process_pool.map_async(func=self.perform_test, iterable=pool_data)
@@ -31,9 +37,10 @@ class ScheduleChecker:
                 failed += 1
 
             passed_string = 'PASS' if test_passed else 'FAIL'
+            print_color = PrintColor.OKGREEN if test_passed else PrintColor.FAIL
             results_fetched += 1
 
-            print('[{}/{}/{}] Result {},{}: {} in time {} seconds'.format(results_fetched, passed, failed, idx, test_files[idx], passed_string, time_elapsed))
+            print('{}[{}/{}/{}] Result {},{}: {} in time {} seconds{}'.format(print_color, results_fetched, passed, failed, idx, test_files[idx], passed_string, time_elapsed, PrintColor.ENDC))
 
         print('Result: {}/{} Passed = {}'.format(passed, total_files, passed * 100.0 / total_files))
         print('Result: {}/{} Failed = {}'.format(failed, total_files, failed * 100.0 / total_files))
@@ -61,4 +68,4 @@ class ScheduleChecker:
         solution_manager.solve()
 
 
-ScheduleChecker('test01')
+ScheduleChecker('test02')
