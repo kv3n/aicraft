@@ -81,7 +81,7 @@ class Solver:
         self.land_slots = [0] * airport.max_time
         self.gate_slots = [0] * airport.max_time
         self.takeoff_slots = [0] * airport.max_time
-        self.schedule = [(0, 0, 0, 0) for _ in xrange(airport.N)]
+        self.schedule = [(0, 0, 0, 0) for _ in range(airport.N)]
 
         self.thermostat = Thermostat(initial_temp=10000, alpha=0.88, update_schedule=4)
 
@@ -214,7 +214,7 @@ class Solver:
     def get_fitness_score(self):
         num_total_conflicts = 0
 
-        for minute in xrange(self.airport.max_time):
+        for minute in range(self.airport.max_time):
             num_total_conflicts += self.fitness_type(minute)
 
         self.fitness_score = num_total_conflicts

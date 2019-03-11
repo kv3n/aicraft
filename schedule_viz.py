@@ -1,6 +1,10 @@
-from PIL import Image, ImageDraw, ImageFont
+import cv2 as cv
+import numpy as np
 from schedule_solver import Airport
 import random
+
+FRAME_WIDTH = 1024
+FRAME_HEIGHT = 1024
 
 
 class PlaneViz:
@@ -16,8 +20,16 @@ class PlaneViz:
 
         self.state_resource_idx = -1
 
-        self.plane_ico = Image.open('viz/plane.png').resize((48, 48))
-        self.plane_color = (random.randint(0, 255), random.randint(0, 255), random.randint(0, 255))
+        self.plane_ico = cv.imread('viz/plane.png', cv.IMREAD_UNCHANGED)
+        self.plane_ico[np.where((self.plane_ico == [0, 0, 0, 255]).all(axis=2))] = [random.randint(0, 255),  # Random B
+                                                                                    random.randint(0, 255),  # Random G
+                                                                                    random.randint(0, 255),  # Random R
+                                                                                    255]
+
+        self.plane_ico[np.where((self.plane_ico == [255, 255, 255, 0]).all(axis=2))] = [0, 0, 0, 0]
+        self.plane_ico = self.plane_ico[:, :, :3]
+        self.plane_ico = cv.resize(self.plane_ico, (48, 48))
+
 
     def update(self, airport_viz):
         cur_time = airport_viz.cur_time
@@ -46,19 +58,37 @@ class PlaneViz:
             return
 
         x = 0
-        y = (self.state_resource_idx + 1) * airport_viz.line_spacing
-
+        y = 0
         if self.state == 1:
-            x = airport_viz.landing_offset + 24 + (
-                        airport_viz.cur_time - self.landing) * 1.0 * (airport_viz.landing_viz-48) / (self.at_gate - self.landing)
-        elif self.state == 2:
-            x = airport_viz.gate_offset + 24 + (
-                        airport_viz.cur_time - self.at_gate) * 1.0 * (airport_viz.gate_viz-48) / (self.takeoff - self.at_gate)
-        elif self.state == 3:
-            x = airport_viz.takeoff_offset + 24 + (
-                        airport_viz.cur_time - self.takeoff) * 1.0 * (airport_viz.takeoff_viz-48) / (self.clear - self.takeoff)
+            y = airport_viz.landing_strips[self.state_resource_idx][0]
+            x = airport_viz.landing_strips[self.state_resource_idx][1]
+            scale = 1.0 / (self.at_gate - self.landing)
 
-        draw_canvas.bitmap(xy=(x-24, y-24), bitmap=self.plane_ico, fill=self.plane_color)
+            x = x + 24 + (airport_viz.cur_time - self.landing) * scale * (airport_viz.landing_viz_width-48)
+        elif self.state == 2:
+            y = airport_viz.gates[self.state_resource_idx][0]
+            x = airport_viz.gates[self.state_resource_idx][1]
+            scale = int(60.0 * (airport_viz.cur_time - self.at_gate) / (self.takeoff - self.at_gate) - 30.0)
+
+            draw_canvas = cv.rectangle(draw_canvas,
+                                       (x-30, y-30), (x+scale, y+30),
+                                       (126, 226, 128), cv.FILLED)
+
+        elif self.state == 3:
+            y = airport_viz.takeoff_strips[self.state_resource_idx][0]
+            x = airport_viz.takeoff_strips[self.state_resource_idx][1]
+            scale = 1.0 / (self.clear - self.takeoff)
+
+            x = x + 24 + (airport_viz.cur_time - self.takeoff) * scale * (airport_viz.takeoff_viz_width-48)
+
+        x = int(x) - 24
+        y = y - 24
+
+        for y_idx in range(0, 48):
+            for x_idx in range(0, 48):
+                if np.allclose(self.plane_ico[y_idx, x_idx, :], [0, 0, 0]):
+                    continue
+                draw_canvas[y+y_idx, x+x_idx] = self.plane_ico[y_idx, x_idx]
 
 
 class AirportViz:
@@ -66,25 +96,34 @@ class AirportViz:
         self.airport = airport
         self.cur_time = 0
         self.sim_done = False
-        self.landing = [False for _ in xrange(self.airport.L)]
-        self.gate = [False for _ in xrange(self.airport.G)]
-        self.takeoff = [False for _ in xrange(self.airport.T)]
+        self.landing = [False for _ in range(self.airport.L)]
+        self.gate = [False for _ in range(self.airport.G)]
+        self.takeoff = [False for _ in range(self.airport.T)]
 
+        per_segment_width = FRAME_WIDTH // 8
         self.max_landing = 0
-        self.landing_viz = 341
         self.landing_offset = 0
+        self.landing_viz_width = per_segment_width * 3
+        self.landing_viz_end = self.landing_offset + self.landing_viz_width
 
         self.max_gate = 0
-        self.gate_viz = 342
-        self.gate_offset = 341
+        self.gate_offset = self.landing_viz_end
+        self.gate_viz_end = self.gate_offset + per_segment_width * 2
 
         self.max_takeoff = 0
-        self.takeoff_viz = 341
-        self.takeoff_offset = 683
+        self.takeoff_offset = self.gate_viz_end
+        self.takeoff_viz_end = FRAME_WIDTH
+        self.takeoff_viz_width = self.takeoff_viz_end - self.takeoff_offset
 
         self.line_spacing = 1024.0 / (max(airport.L, airport.G, airport.T) + 2.0)
 
         self.plane_viz = []
+
+        self.gates = []  # XY for Gate Center
+        self.landing_strips = []  # XY for landing starting
+        self.takeoff_strips = []  # XY for takeoff starting
+        self.do_viz_init()
+
         with open(schedule_file, 'rU') as fp:
             for idx, line in enumerate(fp.readlines()):
                 plane = self.airport.planes[idx]
@@ -93,6 +132,20 @@ class AirportViz:
                 self.max_landing = max(self.max_landing, schedule[0] + plane.M)
                 self.max_gate = max(self.max_gate, schedule[1])
                 self.max_takeoff = max(self.max_takeoff, schedule[1] + plane.O)
+
+    def do_viz_init(self):
+        for idx in range(self.airport.L):
+            y = int((idx + 1) * self.line_spacing)
+            self.landing_strips.append([y, self.landing_offset])
+
+        for idx in range(self.airport.G):
+            y = int((idx + 1) * self.line_spacing)
+            x = int((self.gate_offset + self.gate_viz_end) // 2)
+            self.gates.append([y, x])
+
+        for idx in range(self.airport.T):
+            y = int((idx + 1) * self.line_spacing)
+            self.takeoff_strips.append([y, self.takeoff_offset])
 
     def update(self):
         num_planes_clear = 0
@@ -147,55 +200,78 @@ class AirportViz:
         if num_planes_clear == self.airport.N:
             self.sim_done = True
 
-    def draw(self):
-        img = Image.new('RGB', (1024, 1024), (0, 0, 0))
-        draw_canvas = ImageDraw.Draw(img)
+    def draw(self, draw_canvas):
+        draw_canvas = cv.rectangle(draw_canvas,
+                                   (self.landing_offset, 0), (self.landing_viz_end, FRAME_HEIGHT),
+                                   (160, 160, 160), cv.FILLED)
+        draw_canvas = cv.rectangle(draw_canvas,
+                                   (self.gate_offset, 0), (self.gate_viz_end, FRAME_HEIGHT),
+                                   (200, 200, 200), cv.FILLED)
+        draw_canvas = cv.rectangle(draw_canvas,
+                                   (self.takeoff_offset, 0), (self.takeoff_viz_end, FRAME_HEIGHT),
+                                   (240, 240, 240), cv.FILLED)
 
-        draw_canvas.rectangle(xy=[self.landing_offset, 0, self.landing_viz, 1024],
-                              fill=(160, 160, 160))
-        draw_canvas.rectangle(xy=[self.gate_offset, 0, self.gate_offset+self.gate_viz, 1024],
-                              fill=(200, 200, 200))
-        draw_canvas.rectangle(xy=[self.takeoff_offset, 0, self.takeoff_offset+self.takeoff_viz, 1024],
-                              fill=(240, 240, 240))
+        font = cv.FONT_HERSHEY_SIMPLEX
+        info = 'L: {} G: {} T: {} N: {} Time: {}'.format(self.airport.L, self.airport.G, self.airport.T, self.airport.N, self.cur_time)
+        draw_canvas = cv.putText(draw_canvas, info, (10, 20), font, 0.5, (255, 255, 255), 1, cv.LINE_AA)
 
-        for idx in xrange(self.airport.L):
-            y = (idx + 1) * self.line_spacing
-            draw_canvas.line(xy=[self.landing_offset, y, self.landing_offset+self.landing_viz, y],
-                             fill=(80, 80, 80), width=2)
+        for coords in self.landing_strips:
+            x = coords[1]
+            y = coords[0]
+            draw_canvas = cv.line(draw_canvas,
+                                  (x, y), (self.landing_viz_end, y),
+                                  (40, 40, 40), 3)
 
-        for idx in xrange(self.airport.G):
-            y = (idx + 1) * self.line_spacing
-            draw_canvas.line(xy=[self.gate_offset, y, self.gate_offset+self.gate_viz, y],
-                             fill=(0, 0, 0), width=2)
+        for coords in self.gates:
+            x = coords[1]
+            y = coords[0]
+            draw_canvas = cv.rectangle(draw_canvas,
+                                       (x-30, y-30), (x+30, y+30),
+                                       (47, 47, 211), cv.FILLED)
 
-        for idx in xrange(self.airport.T):
-            y = (idx + 1) * self.line_spacing
-            draw_canvas.line(xy=[self.takeoff_offset, y, self.takeoff_offset+self.takeoff_viz, y],
-                             fill=(40, 40, 40), width=2)
+        for coords in self.takeoff_strips:
+            x = coords[1]
+            y = coords[0]
+            draw_canvas = cv.line(draw_canvas,
+                                  (x, y), (self.takeoff_viz_end, y),
+                                  (80, 80, 80), 3)
 
         for plane in self.plane_viz:
             plane.draw_plane(self, draw_canvas)
 
-        return img
-
 
 class ScheduleVisualizer:
-    def __init__(self, schedule_file):
-        input_file = schedule_file.replace('out_', '')
-        self.file_name = schedule_file.split('/')[-1].rstrip('.txt').replace('test_', 'viz_')
+    def __init__(self, schedule_file, input_file='', show=False):
+        if input_file == '':
+            input_file = schedule_file.replace('out_', '')
+            self.file_name = schedule_file.split('/')[-1].rstrip('.txt').replace('test_', 'viz_')
+        else:
+            self.file_name = 'viz'
 
         self.airport = Airport(input_file=input_file)
         self.airport_viz = AirportViz(self.airport, schedule_file)
+        self.show_viz = show
 
     def run(self):
-        frames = []
+        schedule_video = cv.VideoWriter('viz/{}.mp4'.format(self.file_name),
+                                        cv.VideoWriter_fourcc(*'x264'),
+                                        30.0,
+                                        (FRAME_WIDTH, FRAME_HEIGHT))
+
         while not self.airport_viz.sim_done:
+            frame = np.zeros((FRAME_WIDTH, FRAME_HEIGHT, 3), np.uint8)
             self.airport_viz.update()
-            frames.append(self.airport_viz.draw())
+            self.airport_viz.draw(frame)
 
-        frames[0].save('viz/' + self.file_name + '.gif',
-                       format='GIF', append_images=frames[1:], save_all=True, duration=self.airport.max_time*2, loop=0)
+            schedule_video.write(frame)
+
+            if self.show_viz:
+                cv.imshow('Animation', frame)
+                cv.waitKey(1)
+
+        schedule_video.release()
+        cv.destroyAllWindows()
 
 
-schedule_visualizer = ScheduleVisualizer(schedule_file='test01/out_test_241_28_11_11_9')
+schedule_visualizer = ScheduleVisualizer(schedule_file='output.txt', input_file='input.txt', show=True)
 schedule_visualizer.run()
